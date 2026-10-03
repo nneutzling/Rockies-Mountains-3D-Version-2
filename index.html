@@ -59,8 +59,10 @@
   }
   .panel h2 { margin: 0; font-family: var(--label); font-weight: 600; font-size: clamp(16px, 1.7vw, 24px); letter-spacing: .2em; text-transform: uppercase; }
   .panel .stats { display: flex; gap: 22px; justify-content: center; flex-wrap: wrap; margin-top: 6px; }
-  .stat { display: flex; flex-direction: column; gap: 2px; }
-  .stat b { font-family: var(--display); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .stat b { display: flex; align-items: baseline; gap: 12px; font-family: var(--display); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat small { font-family: var(--label); font-size: 15px; font-weight: 400; letter-spacing: .06em; color: var(--ink-soft); }
+  .stat small::before { content: '·'; margin-right: 12px; }
   .stat span { font-family: var(--label); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-soft); }
   .panel p { margin: 4px 0 0; font-size: 16px; line-height: 1.55; max-width: 40ch; color: var(--ink); }
   .swap { transition: opacity .35s ease, transform .35s ease; }
@@ -88,7 +90,9 @@
     .panel h1 { font-size: clamp(30px, 9vw, 56px); }
     .panel p { font-size: 14.5px; }
     .panel .stats { gap: 16px; margin-top: 0; }
-    .stat b { font-size: 18px; }
+    .stat b { font-size: 21px; gap: 10px; }
+    .stat small { font-size: 13px; }
+    .stat small::before { margin-right: 10px; }
     .topbar { left: 16px; right: 16px; }
     .controls { right: 16px; gap: 10px; }
     .dial { width: 100px; height: 100px; }
@@ -641,9 +645,7 @@ function showPeak(i) {
     el('order').textContent = `Peak ${i + 1} of ${N} · ${p.where}`;
     el('name').textContent = p.native || p.english;
     el('english').textContent = p.native ? p.english : 'Canadian Rockies, Alberta';
-    el('stats').innerHTML = `<div class="stat"><b>${p.elev.toLocaleString('en-CA')} m</b><span>Summit</span></div>
-      <div class="stat"><b>${Math.round(p.elev * 3.28084).toLocaleString('en-CA')} ft</b><span>Summit</span></div>
-      <div class="stat"><b>${(Math.round((p.elev - TERRAIN[p.id].base) / 10) * 10).toLocaleString('en-CA')} m</b><span>Above valley</span></div>`;
+    el('stats').innerHTML = `<div class="stat"><b>${p.elev.toLocaleString('en-CA')} m<small>${Math.round(p.elev * 3.28084).toLocaleString('en-CA')} ft</small></b><span>Summit elevation</span></div>`;
     el('fact').textContent = p.fact;
     swaps.forEach(s => s.classList.remove('out'));
   };
