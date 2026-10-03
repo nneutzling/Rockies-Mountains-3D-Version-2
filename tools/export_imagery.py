@@ -5,8 +5,9 @@ For each peak in TERRAIN this script
      the AWS Terrain Tiles elevation model,
   2. reads the Sentinel-2 L2A true-colour image (TCI, 10 m) for that footprint from the public
      sentinel-cogs bucket on AWS,
-  3. resamples it onto the tile's own grid, grades it and fades the rim to the globe's colours,
+  3. resamples it onto the tile's own grid and grades it,
   4. writes the result into the `const IMAGERY = ...; // @imagery` line of index.html.
+The page fades each tile's rim into the planet's ground itself.
 
 Imagery: contains modified Copernicus Sentinel data (2024).
 
@@ -21,7 +22,7 @@ import rasterio
 from PIL import Image
 from pyproj import Transformer
 from rasterio.windows import Window
-from scipy.ndimage import binary_dilation, gaussian_filter, map_coordinates, zoom
+from scipy.ndimage import map_coordinates
 from scipy.optimize import minimize
 
 PAGE = Path(__file__).resolve().parent.parent / 'index.html'
@@ -34,7 +35,6 @@ DATE = '20240823'
 GUESS = {'yamnuska': (51.1203, -115.1217), 'sisters': (51.0189, -115.3364), 'rundle': (51.1286, -115.4708),
          'cascade': (51.2203, -115.5536), 'castle': (51.2647, -115.9264)}
 OUT = 768                 # texture size in pixels (the tiles are 7.5-9 km, so about 10 m a pixel)
-GROUND, WATER = 0x93b86b, 0x3f86c4
 
 
 def load_terrain():
@@ -43,8 +43,6 @@ def load_terrain():
     for v in t.values():
         S = v['size']
         v['elev'] = np.frombuffer(base64.b64decode(v['h']), '<u2').reshape(S, S).astype(float)
-        bits = np.unpackbits(np.frombuffer(base64.b64decode(v['water']), np.uint8), bitorder='little')
-        v['wet'] = bits[:S * S].reshape(S, S)
     return t
 
 
@@ -65,7 +63,10 @@ def _merc(lat, lon):
 
 X0, Y0 = (int(c) for c in _merc(51.45, -116.1))
 X1, Y1 = (int(c) for c in _merc(50.95, -115.0))
-DEM = np.vstack([np.hstack([_tile(x, y) for x in range(X0, X1 + 1)]) for y in range(Y0, Y1 + 1)]) if __name__ == '__main__' else None
+DEM = None
+
+def load_dem():
+    return np.vstack([np.hstack([_tile(x, y) for x in range(X0, X1 + 1)]) for y in range(Y0, Y1 + 1)])
 
 def dem_at(lat, lon):
     x, y = _merc(lat, lon)
@@ -116,20 +117,13 @@ def read_imagery(key, lat, lon, bearing, extent):
     return np.stack([map_coordinates(a[b].astype(float), [r - r0 - 0.5, c - c0 - 0.5], order=3) for b in range(3)], -1)
 
 
-def finish(raw, wet):
-    """Grade every tile the same way, then fade the rim to the globe's ground (or river) colour."""
+def finish(raw):
+    """Grade every tile the same way and encode it."""
     lo = np.percentile(np.concatenate([a.reshape(-1, 3) for a in raw.values()]), 0.2, axis=0)
-    rgb = lambda h: np.array([(h >> 16) & 255, (h >> 8) & 255, h & 255]) / 255
-    smooth = lambda a, b, x: (lambda s: s * s * (3 - 2 * s))(np.clip((x - a) / (b - a), 0, 1))
-    g = np.arange(OUT) / (OUT - 1) - 0.5
-    rim = smooth(0.82, 0.98, np.hypot(*np.meshgrid(g, g)) * 2)[..., None]
     out = {}
     for key, a in raw.items():
         x = np.clip((a - lo) / (255 - lo.mean()), 0, 1) ** 0.65           # lift the shadows; TCI is dark
         l = x.mean(-1, keepdims=True); x = np.clip(l + (x - l) * 1.18, 0, 1)
-        w = zoom(binary_dilation(wet[key] > 0).astype(float), OUT / wet[key].shape[0], order=1)
-        w = gaussian_filter(w, 1.5)[..., None]
-        x = x * (1 - rim) + (rgb(GROUND) * (1 - w) + rgb(WATER) * w) * rim
         buf = io.BytesIO()
         Image.fromarray((x * 255 + 0.5).astype(np.uint8)).save(buf, 'JPEG', quality=82, optimize=True, progressive=True)
         out[key] = 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
@@ -138,12 +132,14 @@ def finish(raw, wet):
 
 
 def main():
+    global DEM
+    DEM = load_dem()
     t = load_terrain()
     raw = {}
     for key, v in t.items():
         lat, lon, bearing = locate(v, key)
         raw[key] = read_imagery(key, lat, lon, bearing, v['extent'])
-    imagery = finish(raw, {k: v['wet'] for k, v in t.items()})
+    imagery = finish(raw)
     lines = PAGE.read_text().split('\n')
     i = next(n for n, l in enumerate(lines) if l.startswith('const IMAGERY = '))
     lines[i] = 'const IMAGERY = ' + json.dumps(imagery, separators=(',', ':')) + '; // @imagery'
