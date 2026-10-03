@@ -614,16 +614,16 @@ function startAmbience() {
   for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
   const loop = () => { const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true; s.start(); return s; };
   const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 380;
-  const lowGain = ctx.createGain(); lowGain.gain.value = 0.22;
-  const sway = ctx.createOscillator(), swayAmt = ctx.createGain(); sway.frequency.value = 0.09; swayAmt.gain.value = 160;
+  const lowGain = ctx.createGain(); lowGain.gain.value = 0.1;
+  const sway = ctx.createOscillator(), swayAmt = ctx.createGain(); sway.frequency.value = 0.09; swayAmt.gain.value = 110;
   sway.connect(swayAmt).connect(low.frequency); sway.start();
   loop().connect(low).connect(lowGain).connect(master);
   const white = ctx.createBuffer(1, sr * 3, sr), w = white.getChannelData(0);
   for (let i = 0; i < w.length; i++) w[i] = Math.random() * 2 - 1;
   const rustleSrc = ctx.createBufferSource(); rustleSrc.buffer = white; rustleSrc.loop = true; rustleSrc.start();
   const rustle = ctx.createBiquadFilter(); rustle.type = 'bandpass'; rustle.frequency.value = 2600; rustle.Q.value = 0.6;
-  const rustleGain = ctx.createGain(); rustleGain.gain.value = 0.012;
-  const gust = ctx.createOscillator(), gustAmt = ctx.createGain(); gust.frequency.value = 0.07; gustAmt.gain.value = 0.009;
+  const rustleGain = ctx.createGain(); rustleGain.gain.value = 0.005;
+  const gust = ctx.createOscillator(), gustAmt = ctx.createGain(); gust.frequency.value = 0.07; gustAmt.gain.value = 0.0035;
   gust.connect(gustAmt).connect(rustleGain.gain); gust.start();
   rustleSrc.connect(rustle).connect(rustleGain).connect(master);
 
