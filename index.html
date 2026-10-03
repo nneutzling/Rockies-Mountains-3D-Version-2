@@ -45,6 +45,7 @@
   .round:active { transform: translateY(3px); box-shadow: 0 2px 0 rgba(26,34,56,.22); }
   .round:focus-visible, .dial:focus-visible, .step:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
   .round svg { width: 28px; height: 28px; }
+  #sound[aria-pressed="true"] { background: var(--lake); color: var(--paper); }
   .series { font-family: var(--label); font-weight: 600; font-size: 13px; letter-spacing: .24em; text-transform: uppercase; color: var(--ink-soft); }
 
   .panel {
@@ -113,7 +114,7 @@
 
 <div class="chrome">
   <div class="topbar">
-    <button class="round" id="sound" aria-pressed="false" aria-label="Turn on wind sound">
+    <button class="round" id="sound" aria-pressed="false" aria-label="Turn on forest sounds">
       <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M5 12h5l7-6v20l-7-6H5z"/>
         <path class="on" d="M21 11c2 2.6 2 7.4 0 10M24.5 8c4 4.4 4 11.6 0 16" hidden/>
@@ -598,31 +599,129 @@ const eagle = new THREE.Group();
   scene.add(eagle);
 }
 
-// ---------- Wind (synthesised, starts only from the sound button)
+// ---------- Forest ambience (synthesised, starts only from the sound button)
+// A soft breeze in the trees, with songbirds of the Bow Valley calling from around the listener:
+// black-capped chickadee, American robin, dark-eyed junco and varied thrush.
 let audio = null;
 const soundBtn = document.getElementById('sound');
-soundBtn.addEventListener('click', () => {
-  if (!audio) {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate), d = buf.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
-    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 520;
-    const gain = ctx.createGain(); gain.gain.value = 0;
-    const lfo = ctx.createOscillator(), lfoGain = ctx.createGain(); lfo.frequency.value = 0.13; lfoGain.gain.value = 260;
-    lfo.connect(lfoGain).connect(filter.frequency);
-    src.connect(filter).connect(gain).connect(ctx.destination);
-    src.start(); lfo.start();
-    audio = { ctx, gain, on: false };
+function startAmbience() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(), sr = ctx.sampleRate;
+  const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+
+  // Breeze: brown noise through a slowly swaying low-pass, plus a faint high rustle of needles and leaves.
+  const noise = ctx.createBuffer(1, sr * 4, sr), d = noise.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
+  const loop = () => { const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true; s.start(); return s; };
+  const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 380;
+  const lowGain = ctx.createGain(); lowGain.gain.value = 0.22;
+  const sway = ctx.createOscillator(), swayAmt = ctx.createGain(); sway.frequency.value = 0.09; swayAmt.gain.value = 160;
+  sway.connect(swayAmt).connect(low.frequency); sway.start();
+  loop().connect(low).connect(lowGain).connect(master);
+  const white = ctx.createBuffer(1, sr * 3, sr), w = white.getChannelData(0);
+  for (let i = 0; i < w.length; i++) w[i] = Math.random() * 2 - 1;
+  const rustleSrc = ctx.createBufferSource(); rustleSrc.buffer = white; rustleSrc.loop = true; rustleSrc.start();
+  const rustle = ctx.createBiquadFilter(); rustle.type = 'bandpass'; rustle.frequency.value = 2600; rustle.Q.value = 0.6;
+  const rustleGain = ctx.createGain(); rustleGain.gain.value = 0.012;
+  const gust = ctx.createOscillator(), gustAmt = ctx.createGain(); gust.frequency.value = 0.07; gustAmt.gain.value = 0.009;
+  gust.connect(gustAmt).connect(rustleGain.gain); gust.start();
+  rustleSrc.connect(rustle).connect(rustleGain).connect(master);
+
+  // Birds go through a little forest echo: a short decaying noise impulse.
+  const birds = ctx.createGain(); birds.gain.value = 0.9; birds.connect(master);
+  const verb = ctx.createConvolver(), ir = ctx.createBuffer(2, sr * 1.6, sr);
+  for (let c = 0; c < 2; c++) { const x = ir.getChannelData(c); for (let i = 0; i < x.length; i++) x[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / x.length, 3.2); }
+  verb.buffer = ir;
+  const wet = ctx.createGain(); wet.gain.value = 0.28;
+  birds.connect(verb).connect(wet).connect(master);
+
+  // One whistled note: a sine gliding from f0 to f1, with optional vibrato (Hz, depth) and buzz (tremolo rate).
+  function note(out, t, dur, f0, f1, amp, { vib = 0, vibDepth = 0, buzz = 0, attack = 0.012 } = {}) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(amp, t + attack);
+    g.gain.setTargetAtTime(0, t + dur * 0.7, dur * 0.12);
+    if (vib) { const v = ctx.createOscillator(), vg = ctx.createGain(); v.frequency.value = vib; vg.gain.value = vibDepth; v.connect(vg).connect(o.frequency); v.start(t); v.stop(t + dur + 0.3); }
+    let node = o.connect(g);
+    if (buzz) {
+      const am = ctx.createGain(), tr = ctx.createOscillator(), tg = ctx.createGain();
+      am.gain.value = 0.55; tr.frequency.value = buzz; tg.gain.value = 0.45; tr.connect(tg).connect(am.gain); tr.start(t); tr.stop(t + dur + 0.3);
+      node = node.connect(am);
+    }
+    node.connect(out);
+    o.start(t); o.stop(t + dur + 0.3);
   }
-  audio.on = !audio.on;
-  audio.ctx.resume();
-  audio.gain.gain.setTargetAtTime(audio.on ? 0.55 : 0, audio.ctx.currentTime, 0.4);
+  const voice = (pan, level) => {
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain(), g = ctx.createGain();
+    if (p.pan) p.pan.value = pan;
+    g.gain.value = level; g.connect(p).connect(birds);
+    return g;
+  };
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  const SONGS = [
+    // Chickadee "fee-bee": two clear whistles, the second a step lower.
+    { weight: 3, sing(out, t) {
+      const f = rand(3700, 4100);
+      note(out, t, 0.32, f, f * 0.985, 0.16);
+      note(out, t + 0.4, 0.3, f * 0.86, f * 0.85, 0.13);
+      if (Math.random() < 0.4) { note(out, t + 1.6, 0.32, f, f * 0.985, 0.14); note(out, t + 2.0, 0.3, f * 0.86, f * 0.85, 0.12); }
+    } },
+    // Robin: a carolling run of short, warbled, rising and falling phrases.
+    { weight: 3, sing(out, t) {
+      const base = rand(2100, 2500), n = 3 + (Math.random() * 4 | 0);
+      for (let i = 0; i < n; i++) {
+        const up = Math.random() < 0.5, f = base * rand(0.88, 1.18), dur = rand(0.14, 0.24);
+        note(out, t, dur, up ? f * 0.8 : f * 1.15, up ? f * 1.15 : f * 0.82, 0.12, { vib: rand(18, 30), vibDepth: f * 0.04 });
+        t += dur + rand(0.07, 0.16);
+      }
+    } },
+    // Junco: a level, musical trill of quick chips.
+    { weight: 2, sing(out, t) {
+      const f = rand(3800, 5200), n = 10 + (Math.random() * 8 | 0), rate = rand(13, 17);
+      for (let i = 0; i < n; i++) note(out, t + i / rate, 0.045, f * 1.12, f * 0.9, 0.07, { attack: 0.004 });
+    } },
+    // Varied thrush: one long, eerie, buzzy whistle held in the dark of the forest.
+    { weight: 1, sing(out, t) {
+      const f = rand(2600, 4200);
+      note(out, t, rand(1.1, 1.6), f, f * 0.99, 0.07, { buzz: rand(55, 80), attack: 0.25 });
+    } },
+    // Contact chips: a few short calls from somewhere nearby.
+    { weight: 2, sing(out, t) {
+      const f = rand(5200, 6500), n = 1 + (Math.random() * 3 | 0);
+      for (let i = 0; i < n; i++) note(out, t + i * rand(0.18, 0.35), 0.035, f, f * 0.75, 0.05, { attack: 0.003 });
+    } },
+  ];
+  const total = SONGS.reduce((a, s) => a + s.weight, 0);
+  const pick = () => { let r = Math.random() * total; return SONGS.find(s => (r -= s.weight) < 0); };
+  let timer = 0;
+  function chorus() {
+    // A few individual birds hold their place in the stereo field and sing from it.
+    const song = pick(), out = voice(rand(-0.85, 0.85), rand(0.45, 1));
+    song.sing(out, ctx.currentTime + 0.05);
+    timer = setTimeout(chorus, rand(1300, 4200));
+  }
+  return {
+    ctx, on: false,
+    set(on) {
+      this.on = on;
+      ctx.resume();
+      master.gain.setTargetAtTime(on ? 0.9 : 0, ctx.currentTime, 0.5);
+      clearTimeout(timer);
+      if (on) timer = setTimeout(chorus, 600);
+    },
+  };
+}
+soundBtn.addEventListener('click', () => {
+  if (!audio) audio = startAmbience();
+  audio.set(!audio.on);
   soundBtn.setAttribute('aria-pressed', audio.on);
-  soundBtn.setAttribute('aria-label', audio.on ? 'Turn off wind sound' : 'Turn on wind sound');
-  soundBtn.querySelector('.on').hidden = !audio.on;
-  soundBtn.querySelector('.off').hidden = audio.on;
+  soundBtn.setAttribute('aria-label', audio.on ? 'Turn off forest sounds' : 'Turn on forest sounds');
+  // SVG elements have no .hidden property, so toggle the attribute itself.
+  soundBtn.querySelector('.on').toggleAttribute('hidden', !audio.on);
+  soundBtn.querySelector('.off').toggleAttribute('hidden', audio.on);
 });
 
 // ---------- Rotation state, dial and panel
